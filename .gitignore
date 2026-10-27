@@ -182,3 +182,4 @@ cython_debug/
 data/
 .agents/
 .claude/
+.DS_Store

@@ -183,3 +183,5 @@ data/
 .agents/
 .claude/
 .DS_Store
+# Streamlit secrets: holds the API key, must never be committed
+.streamlit/secrets.toml

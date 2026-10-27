@@ -1,25 +1,16 @@
+"""Entry point. Start the app with:  streamlit run app.py"""
+
 import streamlit as st
 
-st.title("Korean Practice")
+from korean_app import db
 
-# A few sample cards. Later these will come from your Preply notes.
-cards = [
-    {"korean": "안녕하세요", "english": "Hello"},
-    {"korean": "감사합니다", "english": "Thank you"},
-    {"korean": "물 주세요", "english": "Water, please"},
+st.set_page_config(page_title="Korean Practice", page_icon=":material/translate:", layout="centered")
+db.init_db()
+
+pages = [
+    st.Page("views/practise.py", title="Practise", icon=":material/school:", default=True),
+    st.Page("views/add_notes.py", title="Add lesson notes", icon=":material/edit_note:"),
+    st.Page("views/cards.py", title="My cards", icon=":material/style:"),
+    st.Page("views/progress.py", title="Progress", icon=":material/insights:"),
 ]
-
-# Streamlit reruns the whole script on every click,
-# so we store "which card am I on" in session_state.
-if "index" not in st.session_state:
-    st.session_state.index = 0
-
-card = cards[st.session_state.index]
-st.header(card["korean"])
-
-if st.button("Show answer"):
-    st.write(card["english"])
-
-if st.button("Next card"):
-    st.session_state.index = (st.session_state.index + 1) % len(cards)
-    st.rerun()
+st.navigation(pages).run()

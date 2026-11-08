@@ -1,8 +1,9 @@
 """Turn raw lesson notes into draft flashcards with the Claude API.
 
-The model is forced to answer by "calling a tool" whose input must match
-the LessonDraft schema below. That way the answer always arrives as
-structured data rather than free text, and pydantic checks it.
+The request uses structured outputs: the API is given the LessonDraft
+schema below and the model's answer is constrained to match it. The answer
+therefore always arrives as structured data rather than free text, and the
+SDK turns it straight into a LessonDraft object.
 """
 
 from typing import Literal
@@ -79,33 +80,6 @@ new material.
 7. Write all translations and explanations in English. Keep explanations short.
 """
 
-TOOL = {
-    "name": "save_lesson_cards",
-    "description": "Save the flashcards made from the lesson notes.",
-}
-
-
-def _inline_refs(schema: dict) -> dict:
-    """pydantic puts nested models under $defs and points to them with $ref.
-    Replace every $ref with the definition itself, so the schema is
-    self-contained and simple."""
-    defs = schema.get("$defs", {})
-
-    def resolve(node):
-        if isinstance(node, dict):
-            if "$ref" in node:
-                return resolve(defs[node["$ref"].split("/")[-1]])
-            return {k: resolve(v) for k, v in node.items() if k != "$defs"}
-        if isinstance(node, list):
-            return [resolve(v) for v in node]
-        return node
-
-    return resolve(schema)
-
-
-TOOL["input_schema"] = _inline_refs(LessonDraft.model_json_schema())
-
-
 # ---------------------------------------------------------------- the call
 
 class NotesError(Exception):
@@ -115,13 +89,12 @@ class NotesError(Exception):
 def notes_to_cards(notes: str, api_key: str, model: str = DEFAULT_MODEL) -> LessonDraft:
     client = anthropic.Anthropic(api_key=api_key)
     try:
-        response = client.messages.create(
+        response = client.messages.parse(
             model=model,
             max_tokens=16000,
             system=SYSTEM_PROMPT,
-            tools=[TOOL],
-            tool_choice={"type": "tool", "name": TOOL["name"]},
             messages=[{"role": "user", "content": f"<notes>\n{notes}\n</notes>"}],
+            output_format=LessonDraft,
         )
     except anthropic.AuthenticationError as e:
         raise NotesError("The API key was rejected. Check ANTHROPIC_API_KEY in .streamlit/secrets.toml.") from e
@@ -132,11 +105,9 @@ def notes_to_cards(notes: str, api_key: str, model: str = DEFAULT_MODEL) -> Less
 
     if response.stop_reason == "max_tokens":
         raise NotesError("The notes were too long to process in one go. Try pasting them in two parts.")
-
-    tool_calls = [block for block in response.content if block.type == "tool_use"]
-    if not tool_calls:
-        raise NotesError("The model did not return any cards. Please try again.")
-    return LessonDraft.model_validate(tool_calls[0].input)
+    if response.parsed_output is None:
+        raise NotesError(f"The model did not return any cards (stop reason: {response.stop_reason}). Please try again.")
+    return response.parsed_output
 
 
 def draft_to_card(draft: CardDraft) -> dict:

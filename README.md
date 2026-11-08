@@ -41,7 +41,7 @@ lesson notes ──► Claude API (structured output) ──► draft cards ─�
 | Shared UI pieces | `korean_app/ui.py` |
 | Tests | `tests/` |
 
-The model must answer through a tool call whose input matches a pydantic schema, so
+The request uses structured outputs: the answer is constrained to a pydantic schema, so
 its output always arrives as validated, structured data.
 
 ## Run it locally

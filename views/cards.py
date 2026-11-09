@@ -48,7 +48,7 @@ def flag(card: dict) -> str:
 
 def due_label(iso_time: str | None) -> str:
     if not iso_time:
-        return ""
+        return "new"
     return f"{datetime.fromisoformat(iso_time).astimezone():%d.%m.%Y %H:%M}"
 
 

@@ -7,7 +7,15 @@ import streamlit as st
 from korean_app.db import KINDS
 
 KIND_LABELS = {"word": "Word", "sentence": "Sentence", "grammar": "Grammar"}
-MODE_LABELS = {"ko_en": "Korean → English", "en_ko": "English → Korean", "cloze": "Fill the gap"}
+MODE_LABELS = {"ko_en": "Korean → English", "en_ko": "English → Korean",
+               "cloze": "Fill the gap", "cloze_2": "Fill the gap"}
+
+
+def gap_parts(card: dict, mode: str) -> tuple[str, str]:
+    """The gap sentence and its answer for gap mode 'cloze' or 'cloze_2'."""
+    if mode == "cloze_2":
+        return card["cloze2_sentence"], card["cloze2_answer"]
+    return card["cloze_sentence"], card["cloze_answer"]
 
 
 def get_secret(name: str, default: str | None = None) -> str | None:
@@ -42,8 +50,9 @@ def text_to_breakdown(text: str) -> list[dict]:
 def show_answer(card: dict, mode: str) -> None:
     """The back of a card: Korean first, the English a little lower down,
     then the word-by-word breakdown and any notes."""
-    if mode == "cloze":
-        filled = card["cloze_sentence"].replace("___", f"**{card['cloze_answer']}**", 1)
+    if mode in ("cloze", "cloze_2"):
+        sentence, answer = gap_parts(card, mode)
+        filled = sentence.replace("___", f"**{answer}**", 1)
         st.markdown(f"### {filled}")
         st.write("")
         st.markdown(card.get("cloze_translation") or "")
@@ -57,7 +66,7 @@ def show_answer(card: dict, mode: str) -> None:
         st.markdown("\n".join(f"- {g['korean']} = {g['english']}" for g in card["breakdown"]))
     if card.get("note"):
         st.caption(card["note"])
-    if card.get("example_korean") and mode != "cloze":
+    if card.get("example_korean") and mode not in ("cloze", "cloze_2"):
         st.markdown(f"Example: {card['example_korean']}  \n{card.get('example_english') or ''}")
     if card.get("original"):
         st.caption(f"Your notes said “{card['original']}”. {card.get('correction_reason') or ''}")
@@ -92,6 +101,9 @@ def card_editor(card: dict, key: str) -> dict:
         cloze_answer = st.text_input("Gap answer", card.get("cloze_answer") or "", key=f"{key}_clozeans")
         cloze_translation = st.text_input("Gap sentence in English", card.get("cloze_translation") or "",
                                           key=f"{key}_clozeen")
+        cloze2_sentence = st.text_input("Second gap, same sentence (sentences only)",
+                                        card.get("cloze2_sentence") or "", key=f"{key}_cloze2")
+        cloze2_answer = st.text_input("Second gap answer", card.get("cloze2_answer") or "", key=f"{key}_cloze2ans")
         uncertain = st.checkbox("Uncertain, check with tutor", bool(card.get("uncertain")), key=f"{key}_unc")
 
     return {
@@ -106,5 +118,7 @@ def card_editor(card: dict, key: str) -> dict:
         "cloze_sentence": cloze_sentence.strip() if "___" in cloze_sentence else None,
         "cloze_answer": cloze_answer.strip() or None,
         "cloze_translation": cloze_translation.strip() or None,
+        "cloze2_sentence": cloze2_sentence.strip() if "___" in cloze2_sentence else None,
+        "cloze2_answer": cloze2_answer.strip() or None,
         "uncertain": uncertain,
     }

@@ -5,16 +5,19 @@ Tables
 lessons   one row per pasted set of lesson notes
 cards     one learnable thing: a word, a sentence or a grammar pattern
 items     one way of practising a card (Korean -> English, English -> Korean,
-          or a gap sentence). Each item has its own spaced-repetition state.
+          or one of up to two gap sentences). Each item has its own spaced-repetition state.
+          New items wait until you start a batch with them.
 reviews   one row per answer you give. This is the raw data for the
           progress page.
+settings  app settings you change in the app, such as the batch size.
+grammar   grammar that has been explained to you; the AI skips explaining it again.
 """
 
 import json
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fsrs import Card as FsrsCard
@@ -25,11 +28,23 @@ from fsrs import Rating, Scheduler
 DB_PATH = Path(os.environ.get("KOREAN_APP_DB", Path(__file__).parent.parent / "data" / "korean.db"))
 
 KINDS = ("word", "sentence", "grammar")
-MODES = ("ko_en", "en_ko", "cloze")
+MODES = ("ko_en", "en_ko", "cloze", "cloze_2")
 
 # FSRS decides when each item comes back. 0.9 means: schedule the next
 # review for when you are predicted to still remember it 90% of the time.
 scheduler = Scheduler(desired_retention=0.9)
+
+ITEMS_TABLE = """
+CREATE TABLE IF NOT EXISTS {name} (
+    id        INTEGER PRIMARY KEY,
+    card_id   INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    mode      TEXT NOT NULL CHECK (mode IN ('ko_en', 'en_ko', 'cloze', 'cloze_2')),
+    fsrs_card TEXT NOT NULL,  -- FSRS state as JSON
+    due       TEXT NOT NULL,  -- ISO time in UTC, copied out of fsrs_card for fast queries
+    batch_started TEXT,       -- when this new item was put into a batch; NULL = still waiting
+    UNIQUE (card_id, mode)
+);
+"""
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS lessons (
@@ -37,6 +52,7 @@ CREATE TABLE IF NOT EXISTS lessons (
     lesson_date TEXT NOT NULL,
     raw_notes   TEXT NOT NULL,
     summary     TEXT,
+    tutor_comments TEXT,      -- what the tutor said that isn't in the notes
     created_at  TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS cards (
@@ -54,18 +70,13 @@ CREATE TABLE IF NOT EXISTS cards (
     cloze_sentence    TEXT,   -- Korean sentence with ___ for the gap
     cloze_answer      TEXT,
     cloze_translation TEXT,
+    cloze2_sentence   TEXT,   -- optional second gap in the same sentence
+    cloze2_answer     TEXT,
     uncertain         INTEGER NOT NULL DEFAULT 0,
     question          TEXT,
     created_at        TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS items (
-    id        INTEGER PRIMARY KEY,
-    card_id   INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
-    mode      TEXT NOT NULL CHECK (mode IN ('ko_en', 'en_ko', 'cloze')),
-    fsrs_card TEXT NOT NULL,  -- FSRS state as JSON
-    due       TEXT NOT NULL,  -- ISO time in UTC, copied out of fsrs_card for fast queries
-    UNIQUE (card_id, mode)
-);
+{items}
 CREATE TABLE IF NOT EXISTS reviews (
     id          INTEGER PRIMARY KEY,
     item_id     INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
@@ -73,9 +84,20 @@ CREATE TABLE IF NOT EXISTS reviews (
     seconds     REAL,              -- time from showing the card to rating it
     reviewed_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS grammar (
+    id          INTEGER PRIMARY KEY,
+    form        TEXT NOT NULL UNIQUE,
+    explanation TEXT,
+    lesson_id   INTEGER REFERENCES lessons(id) ON DELETE SET NULL,
+    added_at    TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_items_due ON items(due);
 CREATE INDEX IF NOT EXISTS idx_reviews_item ON reviews(item_id);
-"""
+""".replace("{items}", ITEMS_TABLE.format(name="items"))
 
 
 def now_utc() -> datetime:
@@ -102,18 +124,71 @@ def connect():
         conn.close()
 
 
+def _columns(conn, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
 def init_db() -> None:
+    """Create the tables, and bring databases from older app versions up to date."""
     with connect() as conn:
         conn.executescript(SCHEMA)
+        added = {
+            "items": ["batch_started TEXT"],
+            "lessons": ["tutor_comments TEXT"],
+            "cards": ["cloze2_sentence TEXT", "cloze2_answer TEXT"],
+        }
+        for table, columns in added.items():
+            for column in columns:
+                if column.split()[0] not in _columns(conn, table):
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
+
+        # The list of allowed modes is fixed when a table is created. Older
+        # databases don't allow 'cloze_2' yet, so rebuild the items table
+        # with the new rule and copy everything across.
+        items_sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'items'").fetchone()["sql"]
+        if "cloze_2" not in items_sql:
+            conn.commit()
+            conn.execute("PRAGMA foreign_keys = OFF")
+            conn.executescript(
+                "BEGIN;"
+                + ITEMS_TABLE.format(name="items_new")
+                + "INSERT INTO items_new (id, card_id, mode, fsrs_card, due, batch_started) "
+                  "SELECT id, card_id, mode, fsrs_card, due, batch_started FROM items;"
+                  "DROP TABLE items;"
+                  "ALTER TABLE items_new RENAME TO items;"
+                  "CREATE INDEX IF NOT EXISTS idx_items_due ON items(due);"
+                  "COMMIT;"
+            )
+            conn.execute("PRAGMA foreign_keys = ON")
+
+
+# ---------------------------------------------------------------- settings
+
+DEFAULT_SETTINGS = {"batch_size": "15"}
+
+
+def get_setting(key: str) -> str:
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else DEFAULT_SETTINGS[key]
+
+
+def set_setting(key: str, value) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)),
+        )
 
 
 # ---------------------------------------------------------------- saving
 
-def add_lesson(raw_notes: str, lesson_date: str, summary: str | None = None) -> int:
+def add_lesson(raw_notes: str, lesson_date: str, summary: str | None = None,
+               tutor_comments: str | None = None) -> int:
     with connect() as conn:
         cur = conn.execute(
-            "INSERT INTO lessons (lesson_date, raw_notes, summary, created_at) VALUES (?, ?, ?, ?)",
-            (lesson_date, raw_notes, summary, iso(now_utc())),
+            "INSERT INTO lessons (lesson_date, raw_notes, summary, tutor_comments, created_at) VALUES (?, ?, ?, ?, ?)",
+            (lesson_date, raw_notes, summary, tutor_comments or None, iso(now_utc())),
         )
         return cur.lastrowid
 
@@ -125,6 +200,8 @@ def modes_for(card: dict) -> list[str]:
         modes.append("en_ko")
     if card.get("cloze_sentence") and card.get("cloze_answer"):
         modes.append("cloze")
+    if card["kind"] == "sentence" and card.get("cloze2_sentence") and card.get("cloze2_answer"):
+        modes.append("cloze_2")
     return modes
 
 
@@ -136,7 +213,7 @@ def _new_item_row(card_id: int, mode: str) -> tuple:
 CARD_FIELDS = (
     "kind", "korean", "english", "note", "original", "correction_reason",
     "example_korean", "example_english", "cloze_sentence", "cloze_answer",
-    "cloze_translation", "uncertain", "question",
+    "cloze_translation", "cloze2_sentence", "cloze2_answer", "uncertain", "question",
 )
 
 
@@ -202,60 +279,83 @@ def list_cards() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
             """SELECT c.*, l.lesson_date,
-                      (SELECT MIN(due) FROM items i WHERE i.card_id = c.id) AS next_due
+                      (SELECT MIN(due) FROM items i WHERE i.card_id = c.id
+                       AND EXISTS (SELECT 1 FROM reviews r WHERE r.item_id = i.id)) AS next_due
                FROM cards c LEFT JOIN lessons l ON l.id = c.lesson_id
                ORDER BY c.id DESC"""
         ).fetchall()
     return [_card_from_row(r) for r in rows]
 
 
-def _local_midnight_utc() -> str:
-    """Start of today on this computer's clock, expressed in UTC."""
+def _end_of_today_utc() -> str:
+    """Midnight tonight on this computer's clock, expressed in UTC."""
     local_now = datetime.now().astimezone()
-    midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return iso(midnight.astimezone(timezone.utc))
+    tomorrow = (local_now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return iso(tomorrow)
 
 
-def new_items_started_today() -> int:
-    with connect() as conn:
-        return conn.execute(
-            """SELECT COUNT(*) FROM (
-                   SELECT item_id, MIN(reviewed_at) AS first FROM reviews GROUP BY item_id
-               ) WHERE first >= ?""",
-            (_local_midnight_utc(),),
-        ).fetchone()[0]
+REVIEWED = "EXISTS (SELECT 1 FROM reviews r WHERE r.item_id = i.id)"
+NOT_REVIEWED = "NOT " + REVIEWED
 
 
-def due_queue(new_per_day: int = 15) -> list[dict]:
-    """Items to practise now: reviews that are due first, then a limited
-    number of brand-new items so a big lesson doesn't flood one day."""
-    now = iso(now_utc())
-    new_left = max(0, new_per_day - new_items_started_today())
+# All Korean -> English items first, so you never see a card's answer right
+# before being asked the reverse direction.
+NEW_ORDER = "CASE i.mode WHEN 'ko_en' THEN 0 WHEN 'en_ko' THEN 1 WHEN 'cloze' THEN 2 ELSE 3 END, i.card_id"
+
+
+def due_queue(include_later_today: bool = False) -> list[dict]:
+    """Items to practise now: reviews that are due first, then the new items
+    of the batch you started. With include_later_today, items scheduled for
+    later today are included too (the "Continue now" button)."""
+    cutoff = _end_of_today_utc() if include_later_today else iso(now_utc())
     with connect() as conn:
         seen = conn.execute(
-            """SELECT i.*, 0 AS is_new FROM items i
-               WHERE i.due <= ? AND EXISTS (SELECT 1 FROM reviews r WHERE r.item_id = i.id)
-               ORDER BY i.due""",
-            (now,),
+            f"SELECT i.*, 0 AS is_new FROM items i WHERE i.due <= ? AND {REVIEWED} ORDER BY i.due",
+            (cutoff,),
         ).fetchall()
         new = conn.execute(
-            """SELECT i.*, 1 AS is_new FROM items i
-               WHERE NOT EXISTS (SELECT 1 FROM reviews r WHERE r.item_id = i.id)
-               -- all Korean -> English first, so you never see a card's
-               -- answer right before being asked the reverse direction
-               ORDER BY CASE i.mode WHEN 'ko_en' THEN 0 WHEN 'en_ko' THEN 1 ELSE 2 END, i.card_id
-               LIMIT ?""",
-            (new_left,),
+            f"""SELECT i.*, 1 AS is_new FROM items i
+                WHERE i.batch_started IS NOT NULL AND {NOT_REVIEWED}
+                ORDER BY i.batch_started, {NEW_ORDER}"""
         ).fetchall()
     return [dict(r) for r in seen] + [dict(r) for r in new]
 
 
-def next_due_time() -> str | None:
+def start_batch(size: int) -> int:
+    """Put the next `size` waiting new items into a batch. Returns how many."""
+    with connect() as conn:
+        cur = conn.execute(
+            f"""UPDATE items SET batch_started = ?
+                WHERE id IN (SELECT i.id FROM items i
+                             WHERE i.batch_started IS NULL AND {NOT_REVIEWED}
+                             ORDER BY {NEW_ORDER} LIMIT ?)""",
+            (iso(now_utc()), size),
+        )
+        return cur.rowcount
+
+
+def waiting_new_count() -> int:
+    """New items not yet put into a batch."""
+    with connect() as conn:
+        return conn.execute(
+            f"SELECT COUNT(*) FROM items i WHERE i.batch_started IS NULL AND {NOT_REVIEWED}"
+        ).fetchone()[0]
+
+
+def later_today() -> tuple[int, str | None]:
+    """Items you already practised that come back later today:
+    how many, and when the first one is due."""
     with connect() as conn:
         row = conn.execute(
-            """SELECT MIN(due) FROM items i
-               WHERE EXISTS (SELECT 1 FROM reviews r WHERE r.item_id = i.id)"""
+            f"SELECT COUNT(*), MIN(i.due) FROM items i WHERE i.due > ? AND i.due <= ? AND {REVIEWED}",
+            (iso(now_utc()), _end_of_today_utc()),
         ).fetchone()
+    return row[0], row[1]
+
+
+def next_due_time() -> str | None:
+    with connect() as conn:
+        row = conn.execute(f"SELECT MIN(due) FROM items i WHERE {REVIEWED}").fetchone()
     return row[0]
 
 
@@ -265,9 +365,7 @@ def counts() -> dict:
             "cards": conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0],
             "items": conn.execute("SELECT COUNT(*) FROM items").fetchone()[0],
             "reviews": conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0],
-            "new": conn.execute(
-                "SELECT COUNT(*) FROM items i WHERE NOT EXISTS (SELECT 1 FROM reviews r WHERE r.item_id = i.id)"
-            ).fetchone()[0],
+            "new": conn.execute(f"SELECT COUNT(*) FROM items i WHERE {NOT_REVIEWED}").fetchone()[0],
         }
 
 
@@ -308,3 +406,33 @@ def reviews_table() -> list[dict]:
                ORDER BY r.reviewed_at"""
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------- grammar list
+
+def list_grammar() -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT g.*, l.lesson_date FROM grammar g
+               LEFT JOIN lessons l ON l.id = g.lesson_id ORDER BY g.added_at, g.id"""
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def known_grammar_forms() -> list[str]:
+    return [g["form"] for g in list_grammar()]
+
+
+def add_grammar(form: str, explanation: str | None = None, lesson_id: int | None = None) -> bool:
+    """Add a form to the list. Returns False if it was already there."""
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO grammar (form, explanation, lesson_id, added_at) VALUES (?, ?, ?, ?)",
+            (form.strip(), (explanation or "").strip() or None, lesson_id, iso(now_utc())),
+        )
+        return cur.rowcount == 1
+
+
+def delete_grammar(grammar_id: int) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM grammar WHERE id = ?", (grammar_id,))

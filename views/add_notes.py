@@ -33,6 +33,11 @@ if draft is None:
         lesson_date = st.date_input("Lesson date", value=date.today(), format="DD.MM.YYYY")
         notes = st.text_area("Your notes, exactly as they are", height=300,
                              placeholder="오늘은 할 일이 많아요! 구두 = heel ...")
+        tutor_comments = st.text_area(
+            "What your tutor said that isn't in the notes (optional)", height=100,
+            placeholder="장 is also used on its own in spoken Korean.",
+            help="Treated as reliable: the AI follows it even where it would have said otherwise.",
+        )
         submitted = st.form_submit_button("Turn into cards", type="primary", disabled=not api_key)
 
     if submitted:
@@ -41,7 +46,9 @@ if draft is None:
         else:
             with st.spinner("Reading your notes and making cards. This takes up to a minute…"):
                 try:
-                    result = ai.notes_to_cards(notes, api_key=api_key, model=model)
+                    result = ai.notes_to_cards(notes, api_key=api_key, model=model,
+                                               tutor_comments=tutor_comments,
+                                               known_grammar=db.known_grammar_forms())
                 except ai.NotesError as e:
                     st.error(str(e))
                     st.stop()
@@ -50,7 +57,9 @@ if draft is None:
                 "notes": notes,
                 "date": lesson_date.isoformat(),
                 "summary": result.summary,
+                "tutor_comments": tutor_comments.strip(),
                 "cards": [ai.draft_to_card(c) for c in result.cards],
+                "new_grammar": [g.model_dump() for g in result.new_grammar],
             }
             st.rerun()
     st.stop()
@@ -71,6 +80,14 @@ with st.form("review"):
         with st.container(border=True):
             keep = st.checkbox("Keep this card", value=True, key=f"{draft['id']}_{i}_keep")
             edited.append((keep, card_editor(card, key=f"{draft['id']}_{i}")))
+    grammar_keep = []
+    if draft["new_grammar"]:
+        st.subheader("New grammar in this lesson", anchor=False)
+        st.caption("Ticked forms go on your grammar list, so future lessons won't explain them again.")
+        for j, g in enumerate(draft["new_grammar"]):
+            ticked = st.checkbox(f"**{g['form']}**: {g['explanation']}", value=True,
+                                 key=f"{draft['id']}_grammar_{j}")
+            grammar_keep.append((ticked, g))
     save = st.form_submit_button("Save cards", type="primary")
 
 if st.button("Discard these drafts"):
@@ -83,9 +100,13 @@ if save:
     if incomplete:
         st.error("Every card you keep needs both Korean and English.")
         st.stop()
-    lesson_id = db.add_lesson(draft["notes"], draft["date"], draft["summary"])
+    lesson_id = db.add_lesson(draft["notes"], draft["date"], draft["summary"], draft["tutor_comments"])
     for card in to_save:
         db.add_card(card, lesson_id)
+    added = sum(db.add_grammar(g["form"], g["explanation"], lesson_id) for ticked, g in grammar_keep if ticked)
     del st.session_state.draft
-    st.session_state.saved_message = f"Saved {len(to_save)} cards. They are waiting for you under Practise."
+    st.session_state.saved_message = (
+        f"Saved {len(to_save)} cards and added {added} grammar forms to your list. "
+        "The cards are waiting for you under Practise."
+    )
     st.rerun()

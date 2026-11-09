@@ -13,15 +13,20 @@ weak spots are.
 - **Notes to cards.** Paste messy notes (Korean, English, half translations, typos).
   Claude drafts cards for words, sentences and grammar patterns, with corrections
   ("your notes said 언제에요; after a vowel it is 언제예요"), word by word
-  breakdowns, example sentences and gap sentences. Unclear items are flagged with a
-  question.
+  breakdowns (particles and dictionary forms), example sentences and gap sentences.
+  Unclear items are flagged with a question. Comments from my tutor that aren't in
+  the notes can be added and take priority.
+- **Grammar list.** The app keeps a list of grammar that has been explained. The AI
+  explains only forms that aren't on it yet and proposes new ones for the list, so
+  basics aren't explained again in every lesson.
 - **Review before saving.** Every draft card can be edited or dropped. Nothing is
   saved without my approval.
 - **Practice in three directions.** Korean to English, English to Korean, and fill
-  the gap. Reveal the answer, then rate it Again, Hard, Good or Easy.
+  the gap (up to two gaps per sentence). Reveal the answer, then rate it Again, Hard, Good or Easy.
 - **Scheduling with FSRS.** The [FSRS](https://github.com/open-spaced-repetition/py-fsrs)
   algorithm predicts when I am about to forget an item and schedules it just before.
-  New items are limited per day.
+  New items are started in batches of a size I choose; the next batch is offered
+  once the current one is scheduled for another day.
 - **Progress.** Every review is stored with its rating and answer time, as the basis
   for a weak spots analysis (in progress).
 
@@ -43,6 +48,9 @@ lesson notes ──► Claude API (structured output) ──► draft cards ─�
 
 The request uses structured outputs: the answer is constrained to a pydantic schema, so
 its output always arrives as validated, structured data.
+
+Design decisions, the reasoning behind them and the roadmap (including the planned
+embeddings and RAG features) are documented in [PROJECT_NOTES.md](PROJECT_NOTES.md).
 
 ## Run it locally
 

@@ -11,6 +11,7 @@ pages = [
     st.Page("views/practise.py", title="Practise", icon=":material/school:", default=True),
     st.Page("views/add_notes.py", title="Add lesson notes", icon=":material/edit_note:"),
     st.Page("views/cards.py", title="My cards", icon=":material/style:"),
+    st.Page("views/grammar.py", title="Grammar list", icon=":material/menu_book:"),
     st.Page("views/progress.py", title="Progress", icon=":material/insights:"),
 ]
 st.navigation(pages).run()

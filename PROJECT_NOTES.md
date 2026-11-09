@@ -4,9 +4,26 @@ The working memory of this project: how we work, what was decided and why,
 and what comes next. Read this first at the start of every new session.
 Update it whenever a decision is made.
 
+The source of truth is this file in the repository. A copy lives in the docs
+of the Claude project "Korean Learning App"; update both together.
+
 Last updated: 9 November 2026
 
 ---
+
+## 0. Current status (start here)
+
+- v0.1 runs on my Mac (Python 3.15). All code changes up to the grammar list,
+  two gaps, tutor comments and batches are committed (9 November).
+- The database is empty: the second test run of the cards was removed on
+  9 November so that the lesson notes from 27 October can be re-run with the
+  current prompt (third run). Put "장 is also used on its own in spoken
+  Korean" in the tutor box.
+- **Next:** review the third-run cards against the decisions below, then use
+  the app for real for about a week. After that: my SQL progress page and
+  option A (embeddings).
+- From 9 November we continue in new chats inside the Claude project
+  "Korean Learning App".
 
 ## 1. Goal
 
@@ -83,6 +100,7 @@ progress page ◄── reviews ◄── practice in batches ◄── FSRS ◄
 | 09.11. | Up to two gaps per sentence | When two parts are equally worth practising |
 | 09.11. | Optional "tutor comments" box, treated as reliable | The AI contradicted my tutor about 장 |
 | 09.11. | Examples must show the most typical situation; notes explain look-alikes (년도: 도 is not the particle) | 있잖아요 example felt unnatural; 년도 lacked context |
+| 09.11. | Continue in new chats in the Claude project; this file is the bridge | The first chat had grown so long that early details were being compressed |
 | 08.11. | Roche link: embeddings first (option A), RAG later (option B) only if A is fun; no React rewrite of the app | Concepts transfer to ATLAS; React would take 5 to 8 weeks and break the app |
 
 ## 6. Roadmap
@@ -183,4 +201,4 @@ concepts carry over.
   used to start telling something ("있잖아요, 저 어제 ...")?
 - Ask my tutor: what did "nfj 똑같아요!" refer to?
 - Is a batch size of 15 right? Decide after a week of use.
-- Delete `data/korean-backup-before-rerun.db` once the re-run cards are fine.
+- Delete `data/korean-backup-before-rerun.db` once the third-run cards are fine.

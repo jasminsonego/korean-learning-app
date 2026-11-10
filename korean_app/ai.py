@@ -1,17 +1,18 @@
 """Turn raw lesson notes into draft flashcards with the Claude API.
 
 The request uses structured outputs: the API is given the LessonDraft
-schema below and the model's answer is constrained to match it. The answer
-therefore always arrives as structured data rather than free text, and the
-SDK turns it straight into a LessonDraft object.
+schema below and the model's answer is constrained to match it. That
+guarantee only holds if the model is allowed to finish, so the code checks
+why the model stopped before validating the JSON into a LessonDraft.
 """
 
 from typing import Literal
 
 import anthropic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
+MAX_OUTPUT_TOKENS = 16000
 
 
 # ---------------------------------------------------------------- output shape
@@ -147,6 +148,10 @@ def build_user_message(notes: str, tutor_comments: str, known_grammar: list[str]
 
 # ---------------------------------------------------------------- the call
 
+# The LessonDraft schema in the form the API expects (what parse() used to build).
+OUTPUT_FORMAT = {"type": "json_schema", "schema": anthropic.transform_schema(LessonDraft)}
+
+
 class NotesError(Exception):
     """Something went wrong turning notes into cards; the message is shown to the user."""
 
@@ -155,13 +160,15 @@ def notes_to_cards(notes: str, api_key: str, model: str = DEFAULT_MODEL,
                    tutor_comments: str = "", known_grammar: list[str] | None = None) -> LessonDraft:
     client = anthropic.Anthropic(api_key=api_key)
     try:
-        response = client.messages.parse(
+        # create() rather than parse(): parse() validates the JSON inside the
+        # call, so a cut-off answer crashed before stop_reason could be checked.
+        response = client.messages.create(
             model=model,
-            max_tokens=16000,
+            max_tokens=MAX_OUTPUT_TOKENS,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user",
                        "content": build_user_message(notes, tutor_comments, known_grammar or [])}],
-            output_format=LessonDraft,
+            output_config={"format": OUTPUT_FORMAT},
         )
     except anthropic.AuthenticationError as e:
         raise NotesError("The API key was rejected. Check ANTHROPIC_API_KEY in .streamlit/secrets.toml.") from e
@@ -169,12 +176,28 @@ def notes_to_cards(notes: str, api_key: str, model: str = DEFAULT_MODEL,
         raise NotesError(f"The Claude API returned an error ({e.status_code}): {e.message}") from e
     except anthropic.APIConnectionError as e:
         raise NotesError("Could not reach the Claude API. Check your internet connection.") from e
+    return parse_lesson(response)
 
+
+def parse_lesson(response) -> LessonDraft:
+    """Turn the API response into a LessonDraft, checking first why the model stopped.
+
+    Every error names the stop reason and the output tokens used, so a failure
+    tells us whether the output limit was the cause."""
+    used = f"{response.usage.output_tokens:,} of {MAX_OUTPUT_TOKENS:,} output tokens"
     if response.stop_reason == "max_tokens":
-        raise NotesError("The notes were too long to process in one go. Try pasting them in two parts.")
-    if response.parsed_output is None:
-        raise NotesError(f"The model did not return any cards (stop reason: {response.stop_reason}). Please try again.")
-    return response.parsed_output
+        raise NotesError(f"The answer was cut off at the output limit ({used}). "
+                         "Try pasting the notes in two parts.")
+    if response.stop_reason != "end_turn":
+        raise NotesError(f"The model stopped early (stop reason: {response.stop_reason}; {used}). "
+                         "Please try again.")
+    text = "".join(block.text for block in response.content if block.type == "text")
+    try:
+        return LessonDraft.model_validate_json(text)
+    except ValidationError as e:
+        first = e.errors()[0]["msg"]
+        raise NotesError(f"The answer did not match the card format ({used}): {first}. "
+                         "Please try again.") from e
 
 
 def draft_to_card(draft: CardDraft) -> dict:

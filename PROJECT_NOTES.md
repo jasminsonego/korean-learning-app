@@ -7,7 +7,7 @@ Update it whenever a decision is made.
 The source of truth is this file in the repository. A copy lives in the docs
 of the Claude project "Korean Learning App"; update both together.
 
-Last updated: 9 November 2026
+Last updated: 10 November 2026
 
 ---
 
@@ -19,6 +19,9 @@ Last updated: 9 November 2026
   9 November so that the lesson notes from 27 October can be re-run with the
   current prompt (third run). Put "장 is also used on its own in spoken
   Korean" in the tutor box.
+- Fix for the "EOF while parsing" crash when turning notes into cards
+  (`korean_app/ai.py`, `tests/test_ai.py`): all 14 tests pass on my Mac
+  (10 November). The next failure will name its stop reason and output tokens.
 - **Next:** review the third-run cards against the decisions below, then use
   the app for real for about a week. After that: my SQL progress page and
   option A (embeddings).
@@ -101,6 +104,8 @@ progress page ◄── reviews ◄── practice in batches ◄── FSRS ◄
 | 09.11. | Optional "tutor comments" box, treated as reliable | The AI contradicted my tutor about 장 |
 | 09.11. | Examples must show the most typical situation; notes explain look-alikes (년도: 도 is not the particle) | 있잖아요 example felt unnatural; 년도 lacked context |
 | 09.11. | Continue in new chats in the Claude project; this file is the bridge | The first chat had grown so long that early details were being compressed |
+| 09.11. | `messages.create()` plus our own validation instead of `messages.parse()`; errors name the stop reason and output tokens | `parse()` validates inside the call, so an answer cut off mid-JSON crashed before the stop reason was checked |
+| 09.11. | Output limit stays at 16,000 tokens until a failure shows the cause | Raising it a lot needs streaming; not worth doing on a guess |
 | 08.11. | Roche link: embeddings first (option A), RAG later (option B) only if A is fun; no React rewrite of the app | Concepts transfer to ATLAS; React would take 5 to 8 weeks and break the app |
 
 ## 6. Roadmap
@@ -200,5 +205,7 @@ concepts carry over.
 - Ask my tutor: is "있잖아요, 오늘 시간 있어요?" natural, or is 있잖아요 mostly
   used to start telling something ("있잖아요, 저 어제 ...")?
 - Ask my tutor: what did "nfj 똑같아요!" refer to?
+- Output limit: if a lesson fails with "cut off at the output limit",
+  raise `MAX_OUTPUT_TOKENS` in `ai.py` and switch the call to streaming.
 - Is a batch size of 15 right? Decide after a week of use.
 - Delete `data/korean-backup-before-rerun.db` once the third-run cards are fine.

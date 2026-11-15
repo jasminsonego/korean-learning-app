@@ -13,14 +13,14 @@ Last updated: 15 November 2026
 
 ## 0. Current status (start here)
 
-- v0.1 runs on my Mac (Python 3.15). Committed up to the streaming, token
-  line, effort script and prompt fixes (15 November); the changes below
-  from the 28 October run are not committed yet.
+- v0.1 runs on my Mac (Python 3.15). All code is committed (15 November,
+  64,000-token limit, token split, batch label).
 - **Third run done (15 November):** the 27 October notes are saved with the
   current prompt: 29 cards, 93 practice items, 11 grammar forms, no reviews
   yet. (Saved first with the date 15.11; Claude corrected it to 27.10.)
   Check of the prompt fixes: 쇼핑 해요 corrected, every card has a gap,
-  꽁짜 not marked as a correction; **년도 still has no look-alike note.**
+  꽁짜 not marked as a correction; 년도 had no look-alike note (I added it
+  by hand).
 - Fix (10 November, tests pass): output limit 32,000 tokens, the answer
   is streamed, and the page shows "Writing card N…" while it arrives. After
   each run the review page shows the tokens used, the time and the effort.
@@ -35,18 +35,24 @@ Last updated: 15 November 2026
 - Prompt fixed (15 November): spacing of noun + 하다 verbs (rule 1), every
   card gets a gap, now required by the schema (rule 9), look-alikes checked
   in sentences too (rule 10).
-- **28 October notes (15 November):** cut off at the 32,000-token limit while
-  writing card 28. Limit raised to 64,000; the token line (review page and
-  errors) now also shows when the first card arrived and how many
-  characters of cards came, so we can see how much went to thinking.
-  Batch setting renamed to "New practice items per batch" (it counts
-  items, not cards).
-- **Next:** run `python -m unittest` (19 tests) and commit; add the 년도 note
-  by hand on My cards; run the 28 October notes again, save them without
-  edits and send Claude the token line, so Claude can check the raw output
-  for the prompt fixes and for overfitting to the 27 October examples; then
-  use the app for real for about a week. After that: my SQL progress page
-  and option A (embeddings).
+- **28 October notes saved (15 November):** first cut off at 32,000 tokens
+  (card 28); with the 64,000 limit: 40 cards, 12 corrected, 3 questions,
+  11 new grammar forms (22 in total). 37,652 tokens, 4 min 8 s, first card
+  after 3 min 19 s, 22,305 characters of cards: about 80% of the time is
+  thinking before the first card.
+- **Check of the 28 October cards (Claude):** the prompt fixes carry over to
+  new material, no sign of overfitting. Spacing corrected on 7 cards
+  (공부하러, 갈 거예요, 안 돼요 …), with nothing over-corrected; every card has
+  a gap, every sentence a breakdown, every word an example; look-alikes
+  explained 4 times (화 in 대화, 만 in 오랜만, 이 in -이랑, -하고 vs 하다 + -고);
+  known grammar not explained again; no 27 October example leaked in.
+  Problems: 운동화 and -화 are duplicates of 27 October cards (the model
+  does not see existing cards); 좀 ≠ "please" marked as a correction,
+  though "please" is half right (should be a note).
+- **Next:** on My cards, delete the duplicate 운동화 and -화 from 28 October,
+  decide on 좀, answer the 3 questions (서울, 요/죠, 있다); then use the app
+  for real for about a week. After that: my SQL progress page and option A
+  (embeddings).
 - From 9 November we continue in new chats inside the Claude project
   "Korean Learning App".
 
@@ -132,7 +138,7 @@ progress page ◄── reviews ◄── practice in batches ◄── FSRS ◄
 | 10.11. | Compare effort high vs medium now, with a script outside the card database (one run each, identical input, empty grammar list); Claude does the comparison at my request | Saving both as lessons would let the first run's ticked grammar change the second run's input, and put test cards in my deck. One run each: cheap, enough for big differences, but run-to-run variation is not measured |
 | 15.11. | Keep effort high | Medium skipped breakdowns, gaps and an example, and made a trivial correction; the minute it saves per lesson is not worth it. One run each, so partly uncertain |
 | 15.11. | Prompt: spacing example (쇼핑해요), gap required on every card (in the schema, not only the prompt), look-alikes checked inside sentences | Seen in the effort runs: 쇼핑 해요 not corrected, 생일이 언제예요? without a gap, 년도 never explained. The examples come from the 27 October notes, so the third run can only confirm the fixes; the next new lesson is the real test |
-| 15.11. | Output limit 64,000 tokens; token line shows time to first card and characters of cards | 28 October notes (about 900 characters, much grammar) hit 32,000 at card 28. The 27 October cards were about 17,400 characters at 14,151 tokens in total, so thinking probably takes a large share; the new numbers will show. At most about 0.64 dollars per lesson |
+| 15.11. | Output limit 64,000 tokens; token line shows time to first card and characters of cards | 28 October notes (638 characters, much grammar) hit 32,000 at card 28. The 27 October cards were about 17,400 characters at 14,151 tokens in total, so thinking probably takes a large share; the new numbers will show. At most about 0.64 dollars per lesson |
 | 08.11. | Roche link: embeddings first (option A), RAG later (option B) only if A is fun; no React rewrite of the app | Concepts transfer to ATLAS; React would take 5 to 8 weeks and break the app |
 
 ## 6. Roadmap
@@ -232,15 +238,19 @@ concepts carry over.
 - Ask my tutor: is "있잖아요, 오늘 시간 있어요?" natural, or is 있잖아요 mostly
   used to start telling something ("있잖아요, 저 어제 ...")?
 - Ask my tutor: what did "nfj 똑같아요!" refer to?
-- Look-alikes (rule 10): 년도 was missed even though it is the rule's own
-  example. If the next lessons miss look-alikes too, give the schema its own
-  field for it (as was done for gaps), so the model has to consider it on
-  every card.
+- Look-alikes (rule 10): 년도 was missed on 27 October, but the 28 October
+  cards explained four. Keep watching; if misses come back, give the schema
+  its own field for it (as was done for gaps).
 - Ask my tutor: did "구두 = heel" mean heeled shoes? Both runs called it
   wrong (구두 = dress shoes; a shoe's heel is 굽).
-- Did the 15 November prompt (rule 10: "check every word in every card")
-  make the model think much longer? Compare the token lines of the next runs
-  with the 14,151 tokens of the 27 October effort run (old prompt). If
-  thinking dominates, options: soften rule 10, effort medium, or split long
-  lessons.
+- Thinking takes about 80% of the time (28 October: 37,652 tokens, first
+  card after 3 min 19 s of 4 min 8 s). Is that the lesson (lots of grammar
+  and corrections) or rule 10 ("check every word in every card")? A clean
+  test: run the 27 October notes with the current prompt through
+  `experiments/compare_effort.py` and compare with the 14,151 tokens of the
+  old prompt. Matters only if lessons get close to 64,000 or the wait
+  bothers me; then: soften rule 10, or split long lessons.
+- Duplicates across lessons (운동화, -화): the model only sees the grammar
+  list, not my cards. Cheap fix: send the Korean of existing cards along,
+  like the grammar list. Later, option B (RAG) does this properly.
 - Is a batch size of 15 practice items right? Decide after a week of use.

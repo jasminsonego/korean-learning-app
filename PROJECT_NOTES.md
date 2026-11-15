@@ -7,7 +7,7 @@ Update it whenever a decision is made.
 The source of truth is this file in the repository. A copy lives in the docs
 of the Claude project "Korean Learning App"; update both together.
 
-Last updated: 10 November 2026
+Last updated: 15 November 2026
 
 ---
 
@@ -15,16 +15,28 @@ Last updated: 10 November 2026
 
 - v0.1 runs on my Mac (Python 3.15). All code changes up to the grammar list,
   two gaps, tutor comments and batches are committed (9 November).
-- The database is empty: the second test run of the cards was removed on
-  9 November so that the lesson notes from 27 October can be re-run with the
-  current prompt (third run). Put "장 is also used on its own in spoken
-  Korean" in the tutor box.
-- Fix for the "EOF while parsing" crash when turning notes into cards
-  (`korean_app/ai.py`, `tests/test_ai.py`): all 14 tests pass on my Mac
-  (10 November). The next failure will name its stop reason and output tokens.
-- **Next:** review the third-run cards against the decisions below, then use
-  the app for real for about a week. After that: my SQL progress page and
-  option A (embeddings).
+- **Third run done (15 November):** the 27 October notes are saved with the
+  current prompt: 29 cards, 93 practice items, 11 grammar forms, no reviews
+  yet. (Saved first with the date 15.11; Claude corrected it to 27.10.)
+  Check of the prompt fixes: 쇼핑 해요 corrected, every card has a gap,
+  꽁짜 not marked as a correction; **년도 still has no look-alike note.**
+- Fix (10 November, tests pass): output limit 32,000 tokens, the answer
+  is streamed, and the page shows "Writing card N…" while it arrives. After
+  each run the review page shows the tokens used, the time and the effort.
+- **Effort comparison (run 15 November):** `python experiments/compare_effort.py`
+  ran the 27 October notes at effort high and medium, one run each; answers
+  in `data/experiments/`. High: 29 cards, 36 gap items, 14,151 tokens, 113 s
+  (the two earlier high runs hit 16,000: large run-to-run variation).
+  Medium: 28 cards, 29 gap items, 7,594 tokens, 47 s; it skipped breakdowns
+  on 3 sentences, gaps on 5 cards and the example for 잘됐다, and marked 꽁짜
+  as a correction (against rule 1). Medium was better on one point: it
+  corrected the spacing in 쇼핑 해요. **Decided: keep high** (no code change).
+- Prompt fixed (15 November): spacing of noun + 하다 verbs (rule 1), every
+  card gets a gap, now required by the schema (rule 9), look-alikes checked
+  in sentences too (rule 10).
+- **Next:** run `python -m unittest` (18 tests) and commit; add the 년도 note
+  by hand on My cards; then use the app for real for about a week. After
+  that: my SQL progress page and option A (embeddings).
 - From 9 November we continue in new chats inside the Claude project
   "Korean Learning App".
 
@@ -106,6 +118,10 @@ progress page ◄── reviews ◄── practice in batches ◄── FSRS ◄
 | 09.11. | Continue in new chats in the Claude project; this file is the bridge | The first chat had grown so long that early details were being compressed |
 | 09.11. | `messages.create()` plus our own validation instead of `messages.parse()`; errors name the stop reason and output tokens | `parse()` validates inside the call, so an answer cut off mid-JSON crashed before the stop reason was checked |
 | 09.11. | Output limit stays at 16,000 tokens until a failure shows the cause | Raising it a lot needs streaming; not worth doing on a guess |
+| 10.11. | Output limit 32,000 tokens, answer streamed, progress shown on the page; effort left at the default (high) | 27 October notes hit 16,000 with the 9 November prompt. Sonnet 5.5 thinks before answering by default, and thinking counts toward the limit: only about 13,800 characters of cards had arrived. The SDK requires streaming above about 21,000 tokens |
+| 10.11. | Compare effort high vs medium now, with a script outside the card database (one run each, identical input, empty grammar list); Claude does the comparison at my request | Saving both as lessons would let the first run's ticked grammar change the second run's input, and put test cards in my deck. One run each: cheap, enough for big differences, but run-to-run variation is not measured |
+| 15.11. | Keep effort high | Medium skipped breakdowns, gaps and an example, and made a trivial correction; the minute it saves per lesson is not worth it. One run each, so partly uncertain |
+| 15.11. | Prompt: spacing example (쇼핑해요), gap required on every card (in the schema, not only the prompt), look-alikes checked inside sentences | Seen in the effort runs: 쇼핑 해요 not corrected, 생일이 언제예요? without a gap, 년도 never explained. The examples come from the 27 October notes, so the third run can only confirm the fixes; the next new lesson is the real test |
 | 08.11. | Roche link: embeddings first (option A), RAG later (option B) only if A is fun; no React rewrite of the app | Concepts transfer to ATLAS; React would take 5 to 8 weeks and break the app |
 
 ## 6. Roadmap
@@ -205,7 +221,13 @@ concepts carry over.
 - Ask my tutor: is "있잖아요, 오늘 시간 있어요?" natural, or is 있잖아요 mostly
   used to start telling something ("있잖아요, 저 어제 ...")?
 - Ask my tutor: what did "nfj 똑같아요!" refer to?
-- Output limit: if a lesson fails with "cut off at the output limit",
-  raise `MAX_OUTPUT_TOKENS` in `ai.py` and switch the call to streaming.
+- Look-alikes (rule 10): 년도 was missed even though it is the rule's own
+  example. If the next lessons miss look-alikes too, give the schema its own
+  field for it (as was done for gaps), so the model has to consider it on
+  every card.
+- Ask my tutor: did "구두 = heel" mean heeled shoes? Both runs called it
+  wrong (구두 = dress shoes; a shoe's heel is 굽).
 - Is a batch size of 15 right? Decide after a week of use.
-- Delete `data/korean-backup-before-rerun.db` once the third-run cards are fine.
+- Delete `data/korean-backup-before-rerun.db` and
+  `data/korean-backup-before-date-fix.db`: the third-run cards are saved and
+  the date is fixed.

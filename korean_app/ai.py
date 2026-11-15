@@ -4,15 +4,24 @@ The request uses structured outputs: the API is given the LessonDraft
 schema below and the model's answer is constrained to match it. That
 guarantee only holds if the model is allowed to finish, so the code checks
 why the model stopped before validating the JSON into a LessonDraft.
+
+The answer is streamed: the output limit is above what the SDK allows
+without streaming, and streaming lets the page show cards as they arrive.
 """
 
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Literal
 
 import anthropic
 from pydantic import BaseModel, Field, ValidationError
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
-MAX_OUTPUT_TOKENS = 16000
+# The model thinks before answering (adaptive thinking, on by default), and that
+# thinking counts toward this limit together with the cards. 16,000 was too
+# little for the 27 October notes with the 9 November prompt.
+MAX_OUTPUT_TOKENS = 32000
 
 
 # ---------------------------------------------------------------- output shape
@@ -45,7 +54,8 @@ class CardDraft(BaseModel):
     correction_reason: str | None = Field(None, description="Why it was wrong, one short sentence")
     example_korean: str | None = None
     example_english: str | None = None
-    cloze: Cloze | None = None
+    cloze: Cloze = Field(
+        description="Every card has a gap, including corrected and uncertain ones (rule 9)")
     second_cloze: Cloze | None = Field(
         None, description="Sentences only: the same sentence with a different gap (rule 9)")
     uncertain: bool = Field(False, description="True if you are not sure what the notes meant")
@@ -84,11 +94,12 @@ Include items that appear only in passing, such as a word with no translation.
 Rules:
 1. Corrections. If the Korean (spelling, spacing, grammar, word choice) or the meaning given \
 in the notes is wrong, the card gets the correct version: put what the notes said in \
-"original" and one short sentence in "correction_reason". Use "original" only for these real \
-mistakes. Fix English typos, grammar, capitals and punctuation silently, without "original". \
-If the notes were right but incomplete, add the missing information in "note" instead. If a \
-form is colloquial (for example 꽁짜), use the standard form and mention the colloquial one in \
-"note".
+"original" and one short sentence in "correction_reason". Spacing counts: a noun + 하다 verb \
+is written as one word (쇼핑해요, not 쇼핑 해요) unless a particle stands between them \
+(쇼핑을 해요). Use "original" only for these real mistakes. Fix English typos, grammar, \
+capitals and punctuation silently, without "original". If the notes were right but \
+incomplete, add the missing information in "note" instead. If a form is colloquial (for \
+example 꽁짜), use the standard form and mention the colloquial one in "note".
 2. Uncertainty. If you cannot tell what something means or why it is in the notes \
 (abbreviations, unclear fragments), still make the card, keep the Korean as written, write \
 your best guess as the English starting with "(guess) ", set "uncertain" to true and ask one \
@@ -122,14 +133,16 @@ not explain forms that are on <known_grammar>, and do not explain the same form 
 polite 해요 style with its English translation. It must show the most typical real situation \
 for the item. For expressions whose use depends on the situation (있잖아요, 잘됐다), say in \
 "note" when people use it.
-9. Gaps. "cloze": for sentences, blank out the most useful word or ending with ___. If a \
-second part of the same sentence is equally worth practising, add "second_cloze": the same \
-sentence with that other part blanked. For words and grammar, use the example sentence and \
-blank out the card's own word, part or ending, never another word; no second_cloze.
-10. Look-alikes. If part of a word looks like something the learner may already know but is \
-something else, explain it in "note". Example: in 년도 (年度, a counted or calendar year) the \
-도 is part of the Sino-Korean word, not the particle 도 (also); at the start of a word it is \
-written 연도.
+9. Gaps. Every card gets a "cloze", including corrected and uncertain cards. For sentences, \
+blank out the most useful word or ending with ___. If a second part of the same sentence is \
+equally worth practising, add "second_cloze": the same sentence with that other part \
+blanked. For words and grammar, use the example sentence and blank out the card's own word, \
+part or ending, never another word; no second_cloze.
+10. Look-alikes. Check every word in every card, sentences included. If part of a word looks \
+like something the learner may already know but is something else, explain it in the "note" \
+of the first card where the word appears. Example: in 년도 (年度, a counted or calendar year) \
+the 도 is part of the Sino-Korean word, not the particle 도 (also); at the start of a word it \
+is written 연도.
 11. Do not add vocabulary or topics that are not in the notes. Example sentences are the only \
 new material.
 12. Write all translations and explanations in English. Keep explanations short.
@@ -156,27 +169,65 @@ class NotesError(Exception):
     """Something went wrong turning notes into cards; the message is shown to the user."""
 
 
+@dataclass
+class RunStats:
+    """How much of the output limit one lesson used, and how long it took."""
+    output_tokens: int
+    seconds: float
+    effort: str
+
+    def describe(self) -> str:
+        minutes, seconds = divmod(round(self.seconds), 60)
+        duration = f"{minutes} min {seconds} s" if minutes else f"{seconds} s"
+        return (f"{self.output_tokens:,} of {MAX_OUTPUT_TOKENS:,} output tokens "
+                f"(thinking included) · {duration} · effort {self.effort}")
+
+
 def notes_to_cards(notes: str, api_key: str, model: str = DEFAULT_MODEL,
-                   tutor_comments: str = "", known_grammar: list[str] | None = None) -> LessonDraft:
+                   tutor_comments: str = "", known_grammar: list[str] | None = None,
+                   on_progress: Callable[[int], None] | None = None,
+                   effort: str | None = None) -> tuple[LessonDraft, RunStats]:
+    """on_progress, if given, is called with the number of cards started so far.
+    effort: "low", "medium", "high" ...; None leaves the model's default (high)."""
     client = anthropic.Anthropic(api_key=api_key)
+    output_config = {"format": OUTPUT_FORMAT}
+    if effort:
+        output_config["effort"] = effort
+    started_at = time.monotonic()
     try:
-        # create() rather than parse(): parse() validates the JSON inside the
-        # call, so a cut-off answer crashed before stop_reason could be checked.
-        response = client.messages.create(
+        # Not output_format=LessonDraft: the SDK would then validate the JSON
+        # itself, so a cut-off answer crashed before stop_reason could be checked.
+        with client.messages.stream(
             model=model,
             max_tokens=MAX_OUTPUT_TOKENS,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user",
                        "content": build_user_message(notes, tutor_comments, known_grammar or [])}],
-            output_config={"format": OUTPUT_FORMAT},
-        )
+            output_config=output_config,
+        ) as stream:
+            text, reported = "", 0
+            for chunk in stream.text_stream:
+                text += chunk
+                started = cards_started(text)
+                if on_progress and started != reported:
+                    reported = started
+                    on_progress(started)
+            response = stream.get_final_message()
     except anthropic.AuthenticationError as e:
         raise NotesError("The API key was rejected. Check ANTHROPIC_API_KEY in .streamlit/secrets.toml.") from e
     except anthropic.APIStatusError as e:
         raise NotesError(f"The Claude API returned an error ({e.status_code}): {e.message}") from e
     except anthropic.APIConnectionError as e:
         raise NotesError("Could not reach the Claude API. Check your internet connection.") from e
-    return parse_lesson(response)
+    stats = RunStats(response.usage.output_tokens, time.monotonic() - started_at, effort or "high (default)")
+    return parse_lesson(response), stats
+
+
+def cards_started(partial_json: str) -> int:
+    """How many cards a partly streamed answer has begun. Every card has a "kind"
+    field and no other object does; quotes inside Korean or English text arrive
+    escaped (\\"), so they cannot produce a false match."""
+    return partial_json.count('"kind"')
 
 
 def parse_lesson(response) -> LessonDraft:

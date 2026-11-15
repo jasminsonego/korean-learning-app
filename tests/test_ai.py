@@ -10,8 +10,12 @@ from pydantic import TypeAdapter
 
 from korean_app import ai
 
+LIMIT = f"{ai.MAX_OUTPUT_TOKENS:,}"
 COMPLETE = ('{"summary":"Clothes","cards":[{"kind":"word","korean":"구두",'
-            '"english":"dress shoes"}]}')
+            '"english":"dress shoes","cloze":{"sentence_with_gap":"___를 사요.",'
+            '"answer":"구두","translation":"I buy dress shoes."}}]}')
+NO_GAP = ('{"summary":"Clothes","cards":[{"kind":"word","korean":"구두",'
+          '"english":"dress shoes"}]}')
 CUT_OFF = COMPLETE[:60]  # stops in the middle of a string, like the 9 November error
 
 
@@ -28,11 +32,11 @@ class ParseLessonTests(unittest.TestCase):
         self.assertEqual(lesson.cards[0].korean, "구두")
 
     def test_answer_cut_off_at_the_limit_gives_a_clear_error(self):
-        response = fake_response(CUT_OFF, stop_reason="max_tokens", output_tokens=16000)
+        response = fake_response(CUT_OFF, stop_reason="max_tokens", output_tokens=ai.MAX_OUTPUT_TOKENS)
         with self.assertRaises(ai.NotesError) as caught:
             ai.parse_lesson(response)
         self.assertIn("output limit", str(caught.exception))
-        self.assertIn("16,000 of 16,000", str(caught.exception))
+        self.assertIn(f"{LIMIT} of {LIMIT}", str(caught.exception))
 
     def test_other_early_stop_names_the_reason(self):
         with self.assertRaises(ai.NotesError) as caught:
@@ -43,7 +47,33 @@ class ParseLessonTests(unittest.TestCase):
         with self.assertRaises(ai.NotesError) as caught:
             ai.parse_lesson(fake_response(CUT_OFF))
         self.assertIn("did not match the card format", str(caught.exception))
-        self.assertIn("1,234 of 16,000", str(caught.exception))
+        self.assertIn(f"1,234 of {LIMIT}", str(caught.exception))
+
+
+    def test_card_without_a_gap_is_rejected(self):
+        """Rule 9: every card has a gap. The schema enforces it."""
+        with self.assertRaises(ai.NotesError) as caught:
+            ai.parse_lesson(fake_response(NO_GAP))
+        self.assertIn("did not match the card format", str(caught.exception))
+
+
+class ProgressTests(unittest.TestCase):
+    def test_counts_cards_begun_in_a_partial_answer(self):
+        self.assertEqual(ai.cards_started('{"summary":"Clothes","cards":['), 0)
+        self.assertEqual(ai.cards_started(COMPLETE), 1)
+        self.assertEqual(ai.cards_started(COMPLETE[:-3] + ',{"kind":"sentence","korean":"구'), 2)
+
+    def test_quoted_word_kind_inside_a_card_is_not_counted(self):
+        text = '{"cards":[{"kind":"word","note":"the English word \\"kind\\" means nice"'
+        self.assertEqual(ai.cards_started(text), 1)
+
+
+class RunStatsTests(unittest.TestCase):
+    def test_description_shows_tokens_time_and_effort(self):
+        text = ai.RunStats(output_tokens=18240, seconds=161.4, effort="medium").describe()
+        self.assertIn(f"18,240 of {LIMIT} output tokens", text)
+        self.assertIn("2 min 41 s", text)
+        self.assertIn("effort medium", text)
 
 
 class OutputFormatTests(unittest.TestCase):

@@ -44,11 +44,15 @@ if draft is None:
         if not notes.strip():
             st.warning("Paste some notes first.")
         else:
-            with st.spinner("Reading your notes and making cards. This takes up to a minute…"):
+            with st.spinner("Reading your notes and making cards. A long lesson can take a few minutes…"):
+                progress = st.empty()
+                progress.caption("Planning the cards…")
                 try:
-                    result = ai.notes_to_cards(notes, api_key=api_key, model=model,
-                                               tutor_comments=tutor_comments,
-                                               known_grammar=db.known_grammar_forms())
+                    result, stats = ai.notes_to_cards(
+                        notes, api_key=api_key, model=model,
+                        tutor_comments=tutor_comments,
+                        known_grammar=db.known_grammar_forms(),
+                        on_progress=lambda n: progress.caption(f"Writing card {n}…"))
                 except ai.NotesError as e:
                     st.error(str(e))
                     st.stop()
@@ -60,6 +64,7 @@ if draft is None:
                 "tutor_comments": tutor_comments.strip(),
                 "cards": [ai.draft_to_card(c) for c in result.cards],
                 "new_grammar": [g.model_dump() for g in result.new_grammar],
+                "stats": stats.describe(),
             }
             st.rerun()
     st.stop()
@@ -73,6 +78,8 @@ st.caption(
     f"{len(draft['cards'])} cards drafted · {corrected} corrected from your notes · "
     f"{uncertain} need your answer. Check each one, untick what you don't want, then save."
 )
+if stats := draft.get("stats"):
+    st.caption(f"The answer used {stats}.")
 
 with st.form("review"):
     edited = []

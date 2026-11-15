@@ -13,8 +13,9 @@ Last updated: 15 November 2026
 
 ## 0. Current status (start here)
 
-- v0.1 runs on my Mac (Python 3.15). All code changes up to the grammar list,
-  two gaps, tutor comments and batches are committed (9 November).
+- v0.1 runs on my Mac (Python 3.15). Committed up to the streaming, token
+  line, effort script and prompt fixes (15 November); the changes below
+  from the 28 October run are not committed yet.
 - **Third run done (15 November):** the 27 October notes are saved with the
   current prompt: 29 cards, 93 practice items, 11 grammar forms, no reviews
   yet. (Saved first with the date 15.11; Claude corrected it to 27.10.)
@@ -34,9 +35,18 @@ Last updated: 15 November 2026
 - Prompt fixed (15 November): spacing of noun + 하다 verbs (rule 1), every
   card gets a gap, now required by the schema (rule 9), look-alikes checked
   in sentences too (rule 10).
-- **Next:** run `python -m unittest` (18 tests) and commit; add the 년도 note
-  by hand on My cards; then use the app for real for about a week. After
-  that: my SQL progress page and option A (embeddings).
+- **28 October notes (15 November):** cut off at the 32,000-token limit while
+  writing card 28. Limit raised to 64,000; the token line (review page and
+  errors) now also shows when the first card arrived and how many
+  characters of cards came, so we can see how much went to thinking.
+  Batch setting renamed to "New practice items per batch" (it counts
+  items, not cards).
+- **Next:** run `python -m unittest` (19 tests) and commit; add the 년도 note
+  by hand on My cards; run the 28 October notes again, save them without
+  edits and send Claude the token line, so Claude can check the raw output
+  for the prompt fixes and for overfitting to the 27 October examples; then
+  use the app for real for about a week. After that: my SQL progress page
+  and option A (embeddings).
 - From 9 November we continue in new chats inside the Claude project
   "Korean Learning App".
 
@@ -122,6 +132,7 @@ progress page ◄── reviews ◄── practice in batches ◄── FSRS ◄
 | 10.11. | Compare effort high vs medium now, with a script outside the card database (one run each, identical input, empty grammar list); Claude does the comparison at my request | Saving both as lessons would let the first run's ticked grammar change the second run's input, and put test cards in my deck. One run each: cheap, enough for big differences, but run-to-run variation is not measured |
 | 15.11. | Keep effort high | Medium skipped breakdowns, gaps and an example, and made a trivial correction; the minute it saves per lesson is not worth it. One run each, so partly uncertain |
 | 15.11. | Prompt: spacing example (쇼핑해요), gap required on every card (in the schema, not only the prompt), look-alikes checked inside sentences | Seen in the effort runs: 쇼핑 해요 not corrected, 생일이 언제예요? without a gap, 년도 never explained. The examples come from the 27 October notes, so the third run can only confirm the fixes; the next new lesson is the real test |
+| 15.11. | Output limit 64,000 tokens; token line shows time to first card and characters of cards | 28 October notes (about 900 characters, much grammar) hit 32,000 at card 28. The 27 October cards were about 17,400 characters at 14,151 tokens in total, so thinking probably takes a large share; the new numbers will show. At most about 0.64 dollars per lesson |
 | 08.11. | Roche link: embeddings first (option A), RAG later (option B) only if A is fun; no React rewrite of the app | Concepts transfer to ATLAS; React would take 5 to 8 weeks and break the app |
 
 ## 6. Roadmap
@@ -227,7 +238,9 @@ concepts carry over.
   every card.
 - Ask my tutor: did "구두 = heel" mean heeled shoes? Both runs called it
   wrong (구두 = dress shoes; a shoe's heel is 굽).
-- Is a batch size of 15 right? Decide after a week of use.
-- Delete `data/korean-backup-before-rerun.db` and
-  `data/korean-backup-before-date-fix.db`: the third-run cards are saved and
-  the date is fixed.
+- Did the 15 November prompt (rule 10: "check every word in every card")
+  make the model think much longer? Compare the token lines of the next runs
+  with the 14,151 tokens of the 27 October effort run (old prompt). If
+  thinking dominates, options: soften rule 10, effort medium, or split long
+  lessons.
+- Is a batch size of 15 practice items right? Decide after a week of use.

@@ -19,10 +19,11 @@ def local_time(iso_time: str) -> datetime:
 
 with st.sidebar:
     batch_size = st.number_input(
-        "New cards per batch", min_value=1, max_value=1000, step=5,
+        "New practice items per batch", min_value=1, max_value=1000, step=5,
         value=int(db.get_setting("batch_size")),
-        help="How many new items you start at once. The next batch is offered "
-             "when the current one is done for today.",
+        help="How many new practice items you start at once. Each card has two to "
+             "four items (Korean to English, English to Korean, one or two gaps). "
+             "The next batch is offered when the current one is done for today.",
     )
     if batch_size != int(db.get_setting("batch_size")):
         db.set_setting("batch_size", batch_size)

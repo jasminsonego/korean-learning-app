@@ -70,10 +70,22 @@ class ProgressTests(unittest.TestCase):
 
 class RunStatsTests(unittest.TestCase):
     def test_description_shows_tokens_time_and_effort(self):
-        text = ai.RunStats(output_tokens=18240, seconds=161.4, effort="medium").describe()
+        text = ai.RunStats(output_tokens=18240, seconds=161.4, effort="medium",
+                           answer_chars=17429, seconds_before_answer=62.0).describe()
         self.assertIn(f"18,240 of {LIMIT} output tokens", text)
         self.assertIn("2 min 41 s", text)
+        self.assertIn("first card after 1 min 2 s", text)
+        self.assertIn("17,429 characters of cards", text)
         self.assertIn("effort medium", text)
+
+    def test_cut_off_error_shows_how_much_of_the_cards_arrived(self):
+        stats = ai.RunStats(output_tokens=ai.MAX_OUTPUT_TOKENS, seconds=300, effort="high",
+                            answer_chars=len(CUT_OFF), seconds_before_answer=120)
+        response = fake_response(CUT_OFF, stop_reason="max_tokens", output_tokens=ai.MAX_OUTPUT_TOKENS)
+        with self.assertRaises(ai.NotesError) as caught:
+            ai.parse_lesson(response, stats)
+        self.assertIn(f"{len(CUT_OFF)} characters of cards", str(caught.exception))
+        self.assertIn("first card after 2 min 0 s", str(caught.exception))
 
 
 class OutputFormatTests(unittest.TestCase):

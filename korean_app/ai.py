@@ -20,8 +20,9 @@ from pydantic import BaseModel, Field, ValidationError
 DEFAULT_MODEL = "claude-sonnet-5-5"
 # The model thinks before answering (adaptive thinking, on by default), and that
 # thinking counts toward this limit together with the cards. 16,000 was too
-# little for the 27 October notes with the 9 November prompt.
-MAX_OUTPUT_TOKENS = 32000
+# little for the 27 October notes with the 9 November prompt, 32,000 for the
+# 28 October notes with the 15 November prompt.
+MAX_OUTPUT_TOKENS = 64000
 
 
 # ---------------------------------------------------------------- output shape
@@ -169,18 +170,32 @@ class NotesError(Exception):
     """Something went wrong turning notes into cards; the message is shown to the user."""
 
 
+def _duration(seconds: float) -> str:
+    minutes, seconds = divmod(round(seconds), 60)
+    return f"{minutes} min {seconds} s" if minutes else f"{seconds} s"
+
+
 @dataclass
 class RunStats:
-    """How much of the output limit one lesson used, and how long it took."""
+    """How much of the output limit one lesson used, and how long it took.
+
+    The API reports thinking and cards together as output tokens. The time
+    before the first card arrives (the model thinks first) and the length of
+    the cards themselves show roughly how the tokens were split."""
     output_tokens: int
     seconds: float
     effort: str
+    answer_chars: int = 0
+    seconds_before_answer: float | None = None
 
     def describe(self) -> str:
-        minutes, seconds = divmod(round(self.seconds), 60)
-        duration = f"{minutes} min {seconds} s" if minutes else f"{seconds} s"
-        return (f"{self.output_tokens:,} of {MAX_OUTPUT_TOKENS:,} output tokens "
-                f"(thinking included) · {duration} · effort {self.effort}")
+        parts = [f"{self.output_tokens:,} of {MAX_OUTPUT_TOKENS:,} output tokens (thinking included)",
+                 _duration(self.seconds)]
+        if self.seconds_before_answer is not None:
+            parts.append(f"first card after {_duration(self.seconds_before_answer)}")
+        parts.append(f"{self.answer_chars:,} characters of cards")
+        parts.append(f"effort {self.effort}")
+        return " · ".join(parts)
 
 
 def notes_to_cards(notes: str, api_key: str, model: str = DEFAULT_MODEL,
@@ -205,8 +220,10 @@ def notes_to_cards(notes: str, api_key: str, model: str = DEFAULT_MODEL,
                        "content": build_user_message(notes, tutor_comments, known_grammar or [])}],
             output_config=output_config,
         ) as stream:
-            text, reported = "", 0
+            text, reported, first_text_at = "", 0, None
             for chunk in stream.text_stream:
+                if first_text_at is None:
+                    first_text_at = time.monotonic()
                 text += chunk
                 started = cards_started(text)
                 if on_progress and started != reported:
@@ -219,8 +236,14 @@ def notes_to_cards(notes: str, api_key: str, model: str = DEFAULT_MODEL,
         raise NotesError(f"The Claude API returned an error ({e.status_code}): {e.message}") from e
     except anthropic.APIConnectionError as e:
         raise NotesError("Could not reach the Claude API. Check your internet connection.") from e
-    stats = RunStats(response.usage.output_tokens, time.monotonic() - started_at, effort or "high (default)")
-    return parse_lesson(response), stats
+    stats = RunStats(
+        output_tokens=response.usage.output_tokens,
+        seconds=time.monotonic() - started_at,
+        effort=effort or "high (default)",
+        answer_chars=len(text),
+        seconds_before_answer=first_text_at - started_at if first_text_at else None,
+    )
+    return parse_lesson(response, stats), stats
 
 
 def cards_started(partial_json: str) -> int:
@@ -230,12 +253,13 @@ def cards_started(partial_json: str) -> int:
     return partial_json.count('"kind"')
 
 
-def parse_lesson(response) -> LessonDraft:
+def parse_lesson(response, stats: RunStats | None = None) -> LessonDraft:
     """Turn the API response into a LessonDraft, checking first why the model stopped.
 
-    Every error names the stop reason and the output tokens used, so a failure
-    tells us whether the output limit was the cause."""
-    used = f"{response.usage.output_tokens:,} of {MAX_OUTPUT_TOKENS:,} output tokens"
+    Every error names the stop reason and the output tokens used (with stats:
+    also the time and how much of the cards had arrived), so a failure tells
+    us whether the output limit was the cause and how the tokens were split."""
+    used = stats.describe() if stats else f"{response.usage.output_tokens:,} of {MAX_OUTPUT_TOKENS:,} output tokens"
     if response.stop_reason == "max_tokens":
         raise NotesError(f"The answer was cut off at the output limit ({used}). "
                          "Try pasting the notes in two parts.")
